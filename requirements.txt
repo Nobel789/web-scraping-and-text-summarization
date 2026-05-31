@@ -1,0 +1,7 @@
+streamlit
+beautifulsoup4
+requests
+PyPDF2
+python-docx
+spacy
+pytest
