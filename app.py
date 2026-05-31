@@ -1,4 +1,4 @@
-import streamlit as st
+from fastapi import FastAPI, File, UploadFile, Form
 import requests
 from bs4 import BeautifulSoup
 import PyPDF2
@@ -16,6 +16,12 @@ except OSError:
     import subprocess
     subprocess.run(["python", "-m", "spacy", "download", "en_core_web_sm"])
     nlp = spacy.load("en_core_web_sm")
+
+app = FastAPI(
+    title="Text Summarizer API",
+    description="API for extracting text from a web link or uploaded files (PDF, Word, Text) and summarizing the content using NLP.",
+    version="1.0.0"
+)
 
 def summarize_text(text, per=0.3):
     try:
@@ -62,9 +68,9 @@ def summarize_text(text, per=0.3):
     except Exception as e:
         return f"Error summarizing text: {e}"
 
-def extract_text_from_pdf(file):
+def extract_text_from_pdf(file_content):
     try:
-        pdf_reader = PyPDF2.PdfReader(file)
+        pdf_reader = PyPDF2.PdfReader(io.BytesIO(file_content))
         text = ""
         for page in pdf_reader.pages:
             text += page.extract_text() + "\n"
@@ -72,17 +78,17 @@ def extract_text_from_pdf(file):
     except Exception as e:
         return f"Error extracting text from PDF: {e}"
 
-def extract_text_from_docx(file):
+def extract_text_from_docx(file_content):
     try:
-        doc = docx.Document(file)
+        doc = docx.Document(io.BytesIO(file_content))
         text = "\n".join([paragraph.text for paragraph in doc.paragraphs])
         return text
     except Exception as e:
         return f"Error extracting text from DOCX: {e}"
 
-def extract_text_from_txt(file):
+def extract_text_from_txt(file_content):
     try:
-        return file.getvalue().decode("utf-8")
+        return file_content.decode("utf-8")
     except Exception as e:
         return f"Error extracting text from TXT: {e}"
 
@@ -104,69 +110,45 @@ def extract_text_from_url(url):
     except Exception as e:
         return f"Error extracting text from URL: {e}"
 
-def main():
-    st.set_page_config(page_title="Text Summarizer", page_icon="📝")
-    st.title("Web Scraping & Text Summarization App")
 
-    st.markdown("""
-    This app allows you to extract text from a web link or uploaded files (PDF, Word, Text)
-    and summarize the content using NLP.
-    """)
+@app.post("/summarize-url")
+async def api_summarize_url(url: str = Form(...), summary_ratio: float = Form(0.3)):
+    text = extract_text_from_url(url)
+    if text.startswith("Error"):
+        return {"error": text}
 
-    input_source = st.radio(
-        "Select Input Source",
-        ("Web Link", "Upload File")
-    )
+    summary = summarize_text(text, per=summary_ratio)
+    if summary.startswith("Error"):
+        return {"error": summary}
 
-    text_to_summarize = ""
+    return {
+        "extracted_text": text,
+        "summary": summary
+    }
 
-    summary_ratio = st.slider("Summary Ratio", min_value=0.1, max_value=0.9, value=0.3, step=0.1)
+@app.post("/summarize-file")
+async def api_summarize_file(file: UploadFile = File(...), summary_ratio: float = Form(0.3)):
+    content = await file.read()
 
-    if input_source == "Web Link":
-        url = st.text_input("Enter the URL:")
-        if st.button("Extract & Summarize"):
-            if url:
-                with st.spinner("Extracting and summarizing..."):
-                    text_to_summarize = extract_text_from_url(url)
-                    if text_to_summarize and not text_to_summarize.startswith("Error"):
-                        st.subheader("Extracted Text")
-                        st.text_area("", text_to_summarize, height=200)
+    text = ""
+    if file.filename.endswith(".txt"):
+        text = extract_text_from_txt(content)
+    elif file.filename.endswith(".pdf"):
+        text = extract_text_from_pdf(content)
+    elif file.filename.endswith(".docx"):
+        text = extract_text_from_docx(content)
+    else:
+        return {"error": "Unsupported file format. Please upload .txt, .pdf, or .docx files."}
 
-                        summary = summarize_text(text_to_summarize, per=summary_ratio)
-                        if summary and not summary.startswith("Error"):
-                            st.subheader("Summary")
-                            st.success(summary)
-                        else:
-                            st.error(summary)
-                    else:
-                        st.error(text_to_summarize)
-            else:
-                st.warning("Please enter a URL.")
+    if text.startswith("Error"):
+        return {"error": text}
 
-    elif input_source == "Upload File":
-        uploaded_file = st.file_uploader("Choose a file", type=["txt", "pdf", "docx"])
-        if uploaded_file is not None:
-            if st.button("Extract & Summarize"):
-                with st.spinner("Extracting and summarizing..."):
-                    if uploaded_file.type == "text/plain":
-                        text_to_summarize = extract_text_from_txt(uploaded_file)
-                    elif uploaded_file.type == "application/pdf":
-                        text_to_summarize = extract_text_from_pdf(uploaded_file)
-                    elif uploaded_file.type == "application/vnd.openxmlformats-officedocument.wordprocessingml.document":
-                        text_to_summarize = extract_text_from_docx(uploaded_file)
+    summary = summarize_text(text, per=summary_ratio)
+    if summary.startswith("Error"):
+        return {"error": summary}
 
-                    if text_to_summarize and not text_to_summarize.startswith("Error"):
-                        st.subheader("Extracted Text")
-                        st.text_area("", text_to_summarize, height=200)
-
-                        summary = summarize_text(text_to_summarize, per=summary_ratio)
-                        if summary and not summary.startswith("Error"):
-                            st.subheader("Summary")
-                            st.success(summary)
-                        else:
-                            st.error(summary)
-                    else:
-                        st.error(text_to_summarize)
-
-if __name__ == "__main__":
-    main()
+    return {
+        "filename": file.filename,
+        "extracted_text": text,
+        "summary": summary
+    }

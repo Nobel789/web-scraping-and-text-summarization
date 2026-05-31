@@ -1,16 +1,16 @@
 import pytest
 import io
 from unittest.mock import patch, MagicMock
-from app import extract_text_from_url, extract_text_from_pdf, extract_text_from_docx, extract_text_from_txt, summarize_text
+from fastapi.testclient import TestClient
+from app import app, extract_text_from_url, extract_text_from_pdf, extract_text_from_docx, extract_text_from_txt, summarize_text
 import docx
 import PyPDF2
 
-def test_extract_text_from_txt():
-    # Mock uploaded file for text
-    mock_file = MagicMock()
-    mock_file.getvalue.return_value = b"Hello world! This is a test."
+client = TestClient(app)
 
-    text = extract_text_from_txt(mock_file)
+def test_extract_text_from_txt():
+    content = b"Hello world! This is a test."
+    text = extract_text_from_txt(content)
     assert text == "Hello world! This is a test."
 
 def test_summarize_text():
@@ -45,7 +45,9 @@ def test_extract_text_from_docx():
     doc.save(file_stream)
     file_stream.seek(0)
 
-    text = extract_text_from_docx(file_stream)
+    content = file_stream.read()
+
+    text = extract_text_from_docx(content)
     assert "First paragraph." in text
     assert "Second paragraph." in text
 
@@ -58,6 +60,35 @@ def test_extract_text_from_pdf():
         mock_reader_instance.pages = [mock_page]
         MockPdfReader.return_value = mock_reader_instance
 
-        # We can pass any dummy object since it's mocked
-        text = extract_text_from_pdf(MagicMock())
+        # We can pass any dummy content since it's mocked
+        text = extract_text_from_pdf(b"dummy pdf content")
         assert "This is a PDF test." in text
+
+@patch('app.requests.get')
+def test_api_summarize_url(mock_get):
+    mock_response = MagicMock()
+    mock_response.content = b"<html><body><p>The quick brown fox jumps over the lazy dog. The quick brown fox jumps over the lazy dog. The quick brown fox jumps over the lazy dog. The quick brown fox jumps over the lazy dog.</p></body></html>"
+    mock_response.raise_for_status.return_value = None
+    mock_get.return_value = mock_response
+
+    response = client.post("/summarize-url", data={"url": "http://example.com", "summary_ratio": 0.5})
+    assert response.status_code == 200
+    data = response.json()
+    assert "extracted_text" in data
+    assert "summary" in data
+    assert "The quick brown fox" in data["extracted_text"]
+
+def test_api_summarize_file_txt():
+    file_content = b"The quick brown fox jumps over the lazy dog. The quick brown fox jumps over the lazy dog. The quick brown fox jumps over the lazy dog. The quick brown fox jumps over the lazy dog."
+
+    response = client.post(
+        "/summarize-file",
+        data={"summary_ratio": 0.5},
+        files={"file": ("test.txt", file_content, "text/plain")}
+    )
+    assert response.status_code == 200
+    data = response.json()
+    assert data["filename"] == "test.txt"
+    assert "extracted_text" in data
+    assert "summary" in data
+    assert "The quick brown fox" in data["extracted_text"]
