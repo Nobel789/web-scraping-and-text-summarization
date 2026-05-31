@@ -1,6 +1,4 @@
-fastapi
-uvicorn
-python-multipart
+streamlit
 beautifulsoup4
 requests
 PyPDF2
